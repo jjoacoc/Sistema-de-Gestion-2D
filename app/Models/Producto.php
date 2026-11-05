@@ -20,6 +20,9 @@ class Producto extends Model
         'Accesorios',
     ];
 
+    // Una prenda con esta cantidad de unidades o menos aparece en "Stock bajo" del panel
+    public const STOCK_BAJO = 10;
+
     protected $fillable = [
         'codigo',
         'nombre',

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\EstanteRequest;
+use Illuminate\Http\Request;
 use App\Models\Estante;
 use Illuminate\Support\Facades\DB;
 
@@ -21,8 +22,8 @@ class EstanteController extends Controller
             ...$solicitud->validated(),
             'posicion_x' => $posicion['x'],
             'posicion_y' => $posicion['y'],
-            'ancho'      => Estante::ANCHO_POR_DEFECTO,
-            'alto'       => Estante::ALTO_POR_DEFECTO,
+            'ancho' => Estante::ANCHO_POR_DEFECTO,
+            'alto' => Estante::ALTO_POR_DEFECTO,
         ]);
 
         return response()->json(['mensaje' => 'Se creó ' . $estante->nombre . '.'], 201);
@@ -51,5 +52,37 @@ class EstanteController extends Controller
         $detalle = $cantidad > 0 ? " Sus $cantidad prendas quedaron sin ubicar." : '';
 
         return response()->json(['mensaje' => "Se eliminó $nombre.$detalle"]);
+    }
+
+    // Guarda la posición y el tamaño de un estante (arrastre y Transformer del modo edición).
+    public function reubicar(Request $solicitud, Estante $estante)
+    {
+        $datos = $solicitud->validate([
+            'posicion_x' => ['required', 'integer', 'min:0'],
+            'posicion_y' => ['required', 'integer', 'min:0'],
+            'ancho' => ['required', 'integer', 'min:' . Estante::ANCHO_MINIMO],
+            'alto' => ['required', 'integer', 'min:' . Estante::ALTO_MINIMO],
+        ]);
+
+        foreach ($datos as $valor) {
+            if ($valor % Estante::GRILLA !== 0) {
+                return response()->json(['mensaje' => 'Las medidas deben ir de ' . Estante::GRILLA . ' en ' . Estante::GRILLA . ' px.'], 422);
+            }
+        }
+
+        $seSale = $datos['posicion_x'] + $datos['ancho'] > Estante::ANCHO_MAPA_SEGURO
+            || $datos['posicion_y'] + $datos['alto'] > Estante::LIMITE_INFERIOR_MAPA;
+
+        if ($seSale) {
+            return response()->json(['mensaje' => 'El estante se sale del mapa.'], 422);
+        }
+
+        if (Estante::hayChoque($datos['posicion_x'], $datos['posicion_y'], $datos['ancho'], $datos['alto'], $estante->id)) {
+            return response()->json(['mensaje' => 'El estante no puede pisar a otro.'], 422);
+        }
+
+        $estante->update($datos);
+
+        return response()->json(['mensaje' => $estante->nombre . ' actualizado.']);
     }
 }

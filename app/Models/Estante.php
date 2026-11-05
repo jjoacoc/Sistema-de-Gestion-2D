@@ -21,6 +21,13 @@ class Estante extends Model
     // Ancho del mapa que damos por seguro al buscar un lugar libre
     public const ANCHO_MAPA_SEGURO = 900;
 
+    // Grilla del mapa (px): los estantes se acomodan en múltiplos de este valor
+    public const GRILLA = 20;
+    // Tamaño mínimo al redimensionar (múltiplos de la grilla).
+    // Con menos, no entran el título, el contador y la barra de ocupación
+    public const ANCHO_MINIMO = 120;
+    public const ALTO_MINIMO = 100;
+
     protected $fillable = [
         'nombre',
         'posicion_x',
@@ -44,12 +51,12 @@ class Estante extends Model
         $usados = $this->productos()
             ->whereNotNull('casillero')
             ->pluck('casillero')
-            ->map(fn ($casillero) => (int) $casillero)
+            ->map(fn($casillero) => (int) $casillero)
             ->all();
 
         // Recorremos los casilleros del estante en orden y devolvemos el primero que no está usado
         for ($numero = 0; $numero < $this->capacidad; $numero++) {
-            if (! in_array($numero, $usados, true)) {
+            if (!in_array($numero, $usados, true)) {
                 return $numero;
             }
         }
@@ -80,16 +87,25 @@ class Estante extends Model
 
                 // Se deja un margen de 20 px para que no queden pegados
                 $ocupado = $existentes->contains(
-                    fn ($otro) => self::sePisan($x, $y, $ancho, $alto, $otro, 20)
+                    fn($otro) => self::sePisan($x, $y, $ancho, $alto, $otro, 20)
                 );
 
-                if (! $ocupado) {
+                if (!$ocupado) {
                     return ['x' => $x, 'y' => $y];
                 }
             }
         }
 
         return null;
+    }
+
+    // ¿Un rectángulo pisa a otro estante? "ignorarId" excluye al estante que se está moviendo.
+    public static function hayChoque(int $x, int $y, int $ancho, int $alto, ?int $ignorarId = null): bool
+    {
+        return self::query()
+            ->when($ignorarId, fn($consulta) => $consulta->where('id', '!=', $ignorarId))
+            ->get(['posicion_x', 'posicion_y', 'ancho', 'alto'])
+            ->contains(fn($otro) => self::sePisan($x, $y, $ancho, $alto, $otro));
     }
 
     // ¿Dos rectángulos se pisan? (con un margen opcional de separación)

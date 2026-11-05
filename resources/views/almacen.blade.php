@@ -43,11 +43,15 @@
         <div x-show="modoEdicion" x-cloak
             class="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-sm">
             <strong>Modo edición.</strong>
-            Elige un estante en el mapa para cambiar su nombre, capacidad o prendas por fila, o elimínalo.
-            Las miniaturas se ocultan mientras editas. Abajo a la derecha puedes crear estantes nuevos.
+            Arrastra un estante para moverlo (se acomoda a una grilla de 20 px y no puede pisar a otro) y usa las
+            manijas azules para cambiarle el tamaño.
+            Elige un estante para editar su nombre, capacidad o prendas por fila, o eliminarlo.
+            Las miniaturas se ocultan mientras editas. En el panel lateral puedes crear estantes nuevos.
         </div>
 
-        <div class="flex flex-col lg:flex-row gap-4">
+        {{-- md:flex-row: el panel lateral queda al costado desde 768 px de ancho (con las herramientas
+        del navegador abiertas la ventana suele ser más angosta que 1024 px) --}}
+        <div class="flex flex-col md:flex-row gap-4">
 
             {{-- Zona del mapa --}}
             <div class="flex-1 min-w-0 bg-white rounded-lg shadow overflow-hidden">
@@ -75,9 +79,11 @@
                     <p x-show="resultado.activo" x-text="textoResultado()" class="w-full text-sm text-gray-600"></p>
                 </div>
 
-                {{-- Aquí Konva dibuja el mapa --}}
+                {{-- Aquí Konva dibuja el mapa. data-medidas lleva la grilla y los límites del modo edición --}}
                 <div id="mapa-almacen" data-url="{{ route('almacen.estantes') }}"
-                    data-url-mover="{{ route('productos.mover', ['producto' => '__ID__']) }}" class="w-full"></div>
+                    data-url-mover="{{ route('productos.mover', ['producto' => '__ID__']) }}"
+                    data-url-geometria="{{ route('estantes.geometria', ['estante' => '__ID__']) }}"
+                    data-medidas="{{ json_encode($medidas) }}" class="w-full"></div>
 
                 {{-- Mensajes del mapa (movimientos correctos o rechazados) --}}
                 <p class="px-4 py-2 text-sm min-h-9 border-t border-gray-100" x-text="estadoMapa.mensaje" :class="{
@@ -88,7 +94,7 @@
             </div>
 
             {{-- Panel lateral --}}
-            <aside class="lg:w-72 space-y-4">
+            <aside class="md:w-72 md:shrink-0 space-y-4">
 
                 {{-- Información del estante seleccionado --}}
                 <div class="bg-white rounded-lg shadow p-4">

@@ -17,6 +17,13 @@ class AlmacenController extends Controller
                 'capacidad' => Estante::CAPACIDAD_MAXIMA,
                 'por_fila' => Estante::POR_FILA_MAXIMO,
             ],
+            'medidas' => [
+                'grilla' => Estante::GRILLA,
+                'ancho_minimo' => Estante::ANCHO_MINIMO,
+                'alto_minimo' => Estante::ALTO_MINIMO,
+                'ancho_mapa' => Estante::ANCHO_MAPA_SEGURO,
+                'limite_inferior' => Estante::LIMITE_INFERIOR_MAPA,
+            ],
         ]);
     }
 

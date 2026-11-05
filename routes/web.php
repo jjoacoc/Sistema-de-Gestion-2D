@@ -25,3 +25,4 @@ Route::patch('/productos/{producto}/stock', [ProductoController::class, 'ajustar
 Route::patch('/productos/{producto}/casillero', [ProductoController::class, 'moverACasillero'])->name('productos.casillero');
 Route::patch('/productos/{producto}/ubicar', [ProductoController::class, 'ubicarEnEstante'])->name('productos.ubicar');
 Route::patch('/productos/{producto}/mover', [ProductoController::class, 'mover'])->name('productos.mover');
+Route::patch('/estantes/{estante}/geometria', [EstanteController::class, 'reubicar'])->name('estantes.geometria');

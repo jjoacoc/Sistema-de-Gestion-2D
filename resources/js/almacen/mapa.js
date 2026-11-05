@@ -18,32 +18,39 @@ const TAMANO_MINIATURA = 40; // Miniaturas dentro de los estantes
 const TAMANO_MINIATURA_ZONA = 56; // Miniaturas en la zona "Sin ubicar"
 const SEPARACION = 8;
 const COLOR_SELECCION = "#2563eb";
-const COLOR_COINCIDENCIA = "#f59e0b"; // NUEVO (paso 7): naranja para lo que coincide con la búsqueda
+const COLOR_COINCIDENCIA = "#f59e0b"; // Naranja para lo que coincide con la búsqueda
 const RELLENO_ZONA = "#fff7ed";
 
 const contenedor = document.getElementById("mapa-almacen");
+
+// Grilla, tamaños mínimos y límites del mapa (vienen del servidor, ver Estante.php)
+const medidas = contenedor ? JSON.parse(contenedor.dataset.medidas) : {};
 
 // ------------------------------------------------------------
 // Estado del mapa
 // ------------------------------------------------------------
 let escenario;
-let capaFondo, capaEstantes, capaMiniaturas, capaGlobo;
+let capaFondo, capaEstantes, capaMiniaturas, capaEdicion, capaGlobo;
 let globo;
+let transformador; // Las manijas para cambiar el tamaño (modo edición)
+let asas; // Grupo que contiene las "asas" arrastrables (modo edición)
 
 let datos = { estantes: [], sin_ubicar: [] }; // Lo último que respondió el servidor
 let idSeleccionado = null; // Estante elegido con click
 let marcos = new Map(); // id de estante -> su rectángulo
+let partesEstantes = new Map(); // id de estante -> las figuras que lo forman
+let asasPorId = new Map(); // id de estante -> su asa de edición
 let rectanguloZonaSinUbicar = null;
 let versionDibujo = 0; // Evita que dos dibujos se pisen entre sí
-let filtro = { texto: "", categoria: "" }; // NUEVO (paso 7): la búsqueda actual
-let modoEdicion = false; // NUEVO (paso 9): ¿está activo el modo edición?
+let filtro = { texto: "", categoria: "" }; // La búsqueda actual
+let modoEdicion = false; // ¿Está activo el modo edición?
 
 if (contenedor) {
     iniciarMapa();
 }
 
 // ------------------------------------------------------------
-// Arranque: crea el escenario y sus 4 capas
+// Arranque: crea el escenario y sus capas
 // ------------------------------------------------------------
 async function iniciarMapa() {
     escenario = new Konva.Stage({
@@ -56,17 +63,36 @@ async function iniciarMapa() {
     capaFondo = new Konva.Layer({ listening: false });
     capaEstantes = new Konva.Layer();
     capaMiniaturas = new Konva.Layer();
+    capaEdicion = new Konva.Layer();
     capaGlobo = new Konva.Layer({ listening: false });
 
     escenario.add(capaFondo);
     escenario.add(capaEstantes);
     escenario.add(capaMiniaturas);
+    escenario.add(capaEdicion);
     escenario.add(capaGlobo);
 
     dibujarGrilla(capaFondo, 1600, ALTO_ESCENARIO);
 
     globo = crearGlobo();
     capaGlobo.add(globo);
+
+    // Capa de edición: primero el grupo de asas y encima el Transformer (las manijas)
+    asas = new Konva.Group();
+    capaEdicion.add(asas);
+
+    transformador = new Konva.Transformer({
+        rotateEnabled: false, // Los estantes no giran
+        flipEnabled: false,
+        keepRatio: false, // Ancho y alto se cambian por separado
+        ignoreStroke: true,
+        borderStroke: COLOR_SELECCION,
+        anchorStroke: COLOR_SELECCION,
+        anchorFill: "#ffffff",
+        anchorSize: 10,
+        boundBoxFunc: ajustarCaja, // Aquí se aplican grilla, límites y choques
+    });
+    capaEdicion.add(transformador);
 
     await cargarDatos();
 
@@ -79,7 +105,7 @@ async function iniciarMapa() {
         pintarSeleccion();
     });
 
-    // NUEVO (paso 7): cuando la página cambia la búsqueda, guardamos el filtro y redibujamos
+    // Cuando la página cambia la búsqueda, guardamos el filtro y redibujamos
     window.addEventListener("filtro-cambiado", (evento) => {
         filtro = evento.detail;
         dibujar();
@@ -91,17 +117,14 @@ async function iniciarMapa() {
         dibujar();
     });
 
-    // NUEVO (paso 8): si cambia el inventario (producto creado, stock modificado), se actualiza el mapa
+    // Si cambia el inventario (producto creado, stock modificado, estante creado o editado), se actualiza el mapa
     window.addEventListener("inventario-actualizado", cargarDatos);
 
-    // NUEVO (paso 9): se activa o desactiva el modo edición
+    // Se activa o desactiva el modo edición
     window.addEventListener("modo-edicion", (evento) => {
         modoEdicion = evento.detail.activo;
         dibujar();
     });
-
-    // NUEVO (paso 9): también se actualiza el mapa cuando se crea, edita o elimina un estante
-    // (ya escucha 'inventario-actualizado' desde el paso 8, así que no hace falta otro aviso)
 }
 
 // ------------------------------------------------------------
@@ -111,7 +134,7 @@ async function cargarDatos() {
     const respuesta = await axios.get(contenedor.dataset.url);
     datos = respuesta.data;
 
-    // NUEVO (paso 7): la lista de categorías para el selector del filtro, sin repetir y ordenada
+    // La lista de categorías para el selector del filtro, sin repetir y ordenada
     const categorias = [
         ...new Set([
             ...datos.estantes.flatMap((estante) =>
@@ -137,18 +160,18 @@ async function cargarDatos() {
             new CustomEvent("estante-seleccionado", { detail: seleccionado }),
         );
     } else {
-        idSeleccionado = null; // NUEVO (paso 9): el estante elegido ya no existe (fue eliminado)
+        idSeleccionado = null; // El estante elegido ya no existe (fue eliminado)
     }
 }
 
 // ------------------------------------------------------------
-// NUEVO (paso 7): ¿hay una búsqueda en marcha?
+// ¿Hay una búsqueda en marcha?
 // ------------------------------------------------------------
 function filtroActivo() {
     return filtro.texto.trim() !== "" || filtro.categoria !== "";
 }
 
-// NUEVO (paso 7): cuenta las coincidencias y se las avisa a la página
+// Cuenta las coincidencias y se las avisa a la página
 function avisarResultado() {
     let coincidencias = 0;
     let estantesConCoincidencia = 0;
@@ -180,7 +203,7 @@ function avisarResultado() {
     );
 }
 
-// NUEVO (paso 7): si hay búsqueda, las prendas que coinciden pasan al principio de la lista
+// Si hay búsqueda, las prendas que coinciden pasan al principio de la lista
 function ordenarPorCoincidencia(productos) {
     if (!filtroActivo()) {
         return productos;
@@ -199,6 +222,12 @@ async function dibujar() {
     // Cada dibujo tiene un número. Si empieza otro mientras éste espera imágenes, éste se descarta
     const miVersion = ++versionDibujo;
 
+    // Se suelta el estante del Transformer ANTES de destruir las figuras
+    transformador.nodes([]);
+    asas.destroyChildren();
+    asasPorId = new Map();
+    partesEstantes = new Map();
+
     capaEstantes.destroyChildren();
     capaMiniaturas.destroyChildren();
     marcos = new Map();
@@ -208,8 +237,11 @@ async function dibujar() {
         capaEstantes.add(crearEstante(estante)),
     );
 
-    // En modo edición se ocultan la zona "Sin ubicar" y las miniaturas, para ver solo los estantes
-    if (!modoEdicion) {
+    if (modoEdicion) {
+        // En modo edición se ocultan la zona "Sin ubicar" y las miniaturas,
+        // y cada estante recibe su asa para arrastrarlo y redimensionarlo
+        datos.estantes.forEach((estante) => asas.add(crearAsa(estante)));
+    } else {
         dibujarZonaSinUbicar();
     }
 
@@ -225,6 +257,7 @@ async function dibujar() {
     escenario.container().style.cursor = "default";
     capaEstantes.batchDraw();
     capaMiniaturas.batchDraw();
+    capaEdicion.batchDraw();
 }
 
 // ------------------------------------------------------------
@@ -280,7 +313,7 @@ function crearEstante(estante) {
     const porcentaje =
         estante.capacidad > 0 ? estante.ocupados / estante.capacidad : 0;
 
-    // NUEVO (paso 7): con búsqueda activa, el estante brilla si tiene coincidencias y se atenúa si no
+    // Con búsqueda activa, el estante brilla si tiene coincidencias y se atenúa si no
     const hayFiltro = filtroActivo();
     const tieneCoincidencias = estante.productos.some((producto) =>
         coincideConFiltro(producto, filtro),
@@ -300,7 +333,7 @@ function crearEstante(estante) {
         stroke: colores.borde,
         strokeWidth: 3,
         cornerRadius: 8,
-        dash: modoEdicion ? [10, 6] : [], // NUEVO (paso 9): borde punteado en modo edición
+        dash: modoEdicion ? [10, 6] : [], // Borde punteado en modo edición
         shadowColor: resaltado ? COLOR_COINCIDENCIA : "black",
         shadowBlur: resaltado ? 18 : 6,
         shadowOpacity: resaltado ? 0.9 : 0.2,
@@ -354,7 +387,18 @@ function crearEstante(estante) {
 
     grupo.add(marco, titulo, detalle, fondoBarra, relleno);
 
-    // --- Interacción ---
+    // Guardamos las figuras: en modo edición se reacomodan en vivo al mover o estirar
+    partesEstantes.set(estante.id, {
+        grupo,
+        marco,
+        titulo,
+        detalle,
+        fondoBarra,
+        relleno,
+        porcentaje,
+    });
+
+    // --- Interacción (fuera del modo edición; en modo edición la atiende el asa) ---
 
     grupo.on("mouseenter", () => {
         escenario.container().style.cursor = "pointer";
@@ -393,6 +437,220 @@ function pintarSeleccion() {
         marco.strokeWidth(esElegido ? 5 : 3);
     });
     capaEstantes.batchDraw();
+    actualizarTransformador();
+}
+
+// ------------------------------------------------------------
+// MODO EDICIÓN: arrastrar y redimensionar estantes
+// ------------------------------------------------------------
+
+// Redondea al múltiplo de la grilla más cercano (47 -> 40, 53 -> 60)
+function ajustarAGrilla(valor) {
+    return Math.round(valor / medidas.grilla) * medidas.grilla;
+}
+
+// Borde derecho permitido: el menor entre el ancho visible y el ancho seguro del servidor
+function limiteDerecho() {
+    return Math.min(escenario.width(), medidas.ancho_mapa);
+}
+
+// La posición válida más cercana: sobre la grilla y dentro del mapa
+function ajustarPosicion(x, y, ancho, alto) {
+    const maxX =
+        Math.floor((limiteDerecho() - ancho) / medidas.grilla) * medidas.grilla;
+    const maxY =
+        Math.floor((medidas.limite_inferior - alto) / medidas.grilla) *
+        medidas.grilla;
+
+    return {
+        x: Math.max(0, Math.min(ajustarAGrilla(x), maxX)),
+        y: Math.max(0, Math.min(ajustarAGrilla(y), maxY)),
+    };
+}
+
+// ¿Ese rectángulo pisaría a otro estante? (tocarse por el borde está permitido)
+function chocaConOtroEstante(x, y, ancho, alto, idPropio) {
+    return datos.estantes.some(
+        (otro) =>
+            otro.id !== idPropio &&
+            x < otro.posicion_x + otro.ancho &&
+            x + ancho > otro.posicion_x &&
+            y < otro.posicion_y + otro.alto &&
+            y + alto > otro.posicion_y,
+    );
+}
+
+// Crea el "asa" de un estante: un rectángulo casi invisible, encima del estante,
+// que es lo que realmente se arrastra y se estira.
+function crearAsa(estante) {
+    const asa = new Konva.Rect({
+        x: estante.posicion_x,
+        y: estante.posicion_y,
+        width: estante.ancho,
+        height: estante.alto,
+        fill: "rgba(37, 99, 235, 0.05)", // Casi transparente, pero recibe los clicks
+        draggable: true,
+        dragBoundFunc: (posicion) => limitarMovimiento(asa, estante.id, posicion),
+    });
+
+    asasPorId.set(estante.id, asa);
+
+    asa.on("mouseenter", () => {
+        escenario.container().style.cursor = "move";
+    });
+
+    asa.on("mouseleave", () => {
+        escenario.container().style.cursor = "default";
+    });
+
+    // Al apretar el mouse sobre un estante, ese queda elegido (y recibe las manijas)
+    asa.on("mousedown touchstart", () => {
+        if (idSeleccionado !== estante.id) {
+            seleccionarEstante(estante.id);
+        }
+    });
+
+    // Mientras se arrastra, el estante dibujado acompaña al asa
+    asa.on("dragmove", () => {
+        acomodarEstante(estante.id, asa.x(), asa.y(), asa.width(), asa.height());
+    });
+
+    // Mientras se estira, Konva cambia la ESCALA del asa. La convertimos en
+    // ancho y alto reales y volvemos la escala a 1 (así no se deforma nada).
+    asa.on("transform", () => {
+        asa.setAttrs({
+            width: asa.width() * asa.scaleX(),
+            height: asa.height() * asa.scaleY(),
+            scaleX: 1,
+            scaleY: 1,
+        });
+        acomodarEstante(estante.id, asa.x(), asa.y(), asa.width(), asa.height());
+    });
+
+    // Al soltar (después de mover o de estirar) se guarda
+    asa.on("dragend transformend", () => guardarGeometria(estante, asa));
+
+    return asa;
+}
+
+// Mientras se arrastra: devuelve la posición permitida más cercana a la del mouse.
+// Avanza de a una celda de la grilla y se detiene antes de chocar, así nunca
+// "salta por encima" de otro estante y se desliza por sus bordes.
+function limitarMovimiento(asa, id, posicion) {
+    const ancho = asa.width();
+    const alto = asa.height();
+    const paso = medidas.grilla;
+    const deseada = ajustarPosicion(posicion.x, posicion.y, ancho, alto);
+
+    let x = ajustarAGrilla(asa.x());
+    let y = ajustarAGrilla(asa.y());
+
+    // Primero en horizontal
+    while (Math.abs(deseada.x - x) >= paso) {
+        const siguiente = x + Math.sign(deseada.x - x) * paso;
+        if (chocaConOtroEstante(siguiente, y, ancho, alto, id)) break;
+        x = siguiente;
+    }
+
+    // Después en vertical
+    while (Math.abs(deseada.y - y) >= paso) {
+        const siguiente = y + Math.sign(deseada.y - y) * paso;
+        if (chocaConOtroEstante(x, siguiente, ancho, alto, id)) break;
+        y = siguiente;
+    }
+
+    return { x, y };
+}
+
+// El Transformer llama a esta función en cada movimiento de una manija.
+// Devuelve la caja ajustada a la grilla, o la anterior si la nueva no es válida.
+function ajustarCaja(anterior, nueva) {
+    // Cada borde se ajusta por separado: al estirar un lado, el opuesto no se mueve
+    const izquierda = ajustarAGrilla(nueva.x);
+    const arriba = ajustarAGrilla(nueva.y);
+    const derecha = ajustarAGrilla(nueva.x + nueva.width);
+    const abajo = ajustarAGrilla(nueva.y + nueva.height);
+    const ancho = derecha - izquierda;
+    const alto = abajo - arriba;
+
+    const valida =
+        ancho >= medidas.ancho_minimo &&
+        alto >= medidas.alto_minimo &&
+        izquierda >= 0 &&
+        arriba >= 0 &&
+        derecha <= limiteDerecho() &&
+        abajo <= medidas.limite_inferior &&
+        !chocaConOtroEstante(izquierda, arriba, ancho, alto, idSeleccionado);
+
+    return valida
+        ? { ...nueva, x: izquierda, y: arriba, width: ancho, height: alto }
+        : anterior;
+}
+
+// Muestra las manijas en el estante elegido (solo en modo edición)
+function actualizarTransformador() {
+    if (!transformador) return;
+
+    const asa = modoEdicion ? asasPorId.get(idSeleccionado) : null;
+    transformador.nodes(asa ? [asa] : []);
+    capaEdicion.batchDraw();
+}
+
+// Mueve y estira las figuras del estante dibujado (para que sigan al asa en vivo)
+function acomodarEstante(id, x, y, ancho, alto) {
+    const partes = partesEstantes.get(id);
+    if (!partes) return;
+
+    const anchoBarra = ancho - 40;
+
+    partes.grupo.position({ x, y });
+    partes.marco.size({ width: ancho, height: alto });
+    partes.titulo.width(ancho);
+    partes.detalle.width(ancho);
+    partes.fondoBarra.setAttrs({ y: alto - 16, width: anchoBarra });
+    partes.relleno.setAttrs({
+        y: alto - 16,
+        width: anchoBarra * Math.min(partes.porcentaje, 1),
+    });
+
+    capaEstantes.batchDraw();
+}
+
+// Guarda posición y tamaño. Pase lo que pase, después se redibuja con los datos del servidor:
+// si lo rechazó, el estante vuelve a su lugar.
+async function guardarGeometria(estante, asa) {
+    const nueva = {
+        posicion_x: ajustarAGrilla(asa.x()),
+        posicion_y: ajustarAGrilla(asa.y()),
+        ancho: ajustarAGrilla(asa.width() * asa.scaleX()),
+        alto: ajustarAGrilla(asa.height() * asa.scaleY()),
+    };
+
+    const sinCambios =
+        nueva.posicion_x === estante.posicion_x &&
+        nueva.posicion_y === estante.posicion_y &&
+        nueva.ancho === estante.ancho &&
+        nueva.alto === estante.alto;
+
+    if (sinCambios) return;
+
+    try {
+        const url = contenedor.dataset.urlGeometria.replace(
+            "__ID__",
+            estante.id,
+        );
+        const respuesta = await axios.patch(url, nueva, {
+            headers: { "X-CSRF-TOKEN": tokenCsrf() },
+        });
+        avisar(respuesta.data.mensaje + " ✔", "ok");
+    } catch (error) {
+        avisar(
+            error.response?.data?.mensaje ?? "No se pudo guardar el cambio.",
+            "error",
+        );
+    }
+
+    await cargarDatos();
 }
 
 // ------------------------------------------------------------
@@ -466,7 +724,7 @@ async function crearTodasLasMiniaturas() {
 
     // 1. Miniaturas dentro de cada estante (centradas)
     datos.estantes.forEach((estante) => {
-        const productos = ordenarPorCoincidencia(estante.productos); // NUEVO (paso 7)
+        const productos = ordenarPorCoincidencia(estante.productos);
 
         const maximo = Math.max(
             2,
@@ -499,7 +757,7 @@ async function crearTodasLasMiniaturas() {
         if (extra > 0) {
             const x = inicioX + cantidad * (TAMANO_MINIATURA + SEPARACION);
 
-            // NUEVO (paso 7): el "+N" se resalta si entre las prendas ocultas hay coincidencias
+            // El "+N" se resalta si entre las prendas ocultas hay coincidencias
             const ocultasCoinciden =
                 filtroActivo() &&
                 productos
@@ -519,7 +777,7 @@ async function crearTodasLasMiniaturas() {
     });
 
     // 2. Miniaturas de la zona "Sin ubicar" (alineadas a la izquierda)
-    const sinUbicar = ordenarPorCoincidencia(datos.sin_ubicar); // NUEVO (paso 7)
+    const sinUbicar = ordenarPorCoincidencia(datos.sin_ubicar);
     const zona = rectanguloZona();
     const maximoZona = Math.max(
         2,
@@ -573,7 +831,7 @@ function crearInsigniaExtra(extra, x, y, tamano, resaltada = false) {
             width: tamano,
             height: tamano,
             fill: "#e5e7eb",
-            stroke: resaltada ? COLOR_COINCIDENCIA : null, // NUEVO (paso 7)
+            stroke: resaltada ? COLOR_COINCIDENCIA : null,
             strokeWidth: resaltada ? 3 : 0,
             cornerRadius: 6,
         }),
@@ -596,7 +854,7 @@ function crearInsigniaExtra(extra, x, y, tamano, resaltada = false) {
 
 // Una miniatura arrastrable. "idEstante" es null si está en la zona "Sin ubicar"
 async function crearMiniatura(producto, x, y, tamano, idEstante) {
-    // NUEVO (paso 7): con búsqueda activa, lo que coincide se resalta y lo demás se atenúa
+    // Con búsqueda activa, lo que coincide se resalta y lo demás se atenúa
     const hayFiltro = filtroActivo();
     const coincide = coincideConFiltro(producto, filtro);
     const opacidadBase = hayFiltro && !coincide ? 0.2 : 1;
@@ -673,7 +931,7 @@ async function crearMiniatura(producto, x, y, tamano, idEstante) {
         }
     });
 
-    // NUEVO (paso 8): un doble click abre la ficha de la prenda (para manejar el stock)
+    // Un doble click abre la ficha de la prenda (para manejar el stock)
     grupo.on("dblclick dbltap", () => {
         window.dispatchEvent(
             new CustomEvent("abrir-ficha", { detail: producto }),
@@ -698,7 +956,7 @@ async function crearMiniatura(producto, x, y, tamano, idEstante) {
     });
 
     grupo.on("dragend", async () => {
-        grupo.opacity(opacidadBase); // CAMBIA (paso 7): vuelve a la opacidad que corresponde según la búsqueda
+        grupo.opacity(opacidadBase); // Vuelve a la opacidad que corresponde según la búsqueda
         escenario.container().style.cursor = "default";
 
         const destino = buscarDestino({
